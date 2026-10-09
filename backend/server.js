@@ -1,3 +1,4 @@
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const Task = require("./models/Task");
@@ -5,31 +6,15 @@ const bcrypt = require("bcryptjs");
 const User = require("./models/User");
 const jwt = require("jsonwebtoken");
 const authMiddleware = require("./middleware/auth");
-
+const { generateAIResponse } = require("./services/ai");
 const app = express();
-require("dotenv").config();
 
+console.log("Gemini API key loaded:", Boolean(process.env.GEMINI_API_KEY));
+console.log("OpenRouter API key loaded:", !!process.env.OPENROUTER_API_KEY);
 const mongoose = require("mongoose");
 
 app.use(cors());
 app.use(express.json());
-const tasks = [
-  {
-    id: 1,
-    title: "Learn Node.js",
-    completed: false,
-  },
-  {
-    id: 2,
-    title: "Learn Express",
-    completed: false,
-  },
-  {
-    id: 3,
-    title: "Build API",
-    completed: true,
-  },
-];
 
 app.get("/tasks", authMiddleware, async (req, res) => {
   try {
@@ -92,6 +77,94 @@ app.post("/tasks", authMiddleware, async (req, res) => {
   }
 });
 
+app.post("/ai/analyze", authMiddleware, async (req, res) => {
+  try {
+    // 1. Retrieve only this authenticated user's tasks
+    const tasks = await Task.find({
+      userId: req.user.userId,
+    });
+
+    if (tasks.length === 0) {
+      return res.status(400).json({
+        message: "No tasks found. Add a task before analyzing.",
+      });
+    }
+
+    // 2. Construct context from actual database records
+    const taskContext = tasks
+      .map(
+        (task, index) =>
+          `${index + 1}. ID: ${task._id} | Title: ${task.title} | Status: ${
+            task.completed ? "Completed" : "Pending"
+          }`,
+      )
+      .join("\n");
+
+    // 3. Construct the prompt
+    const prompt = `
+Analyze the following user's tasks and rank them by priority.
+
+Consider task completion status. Focus recommendations on pending tasks.
+Do not invent deadlines or personal context that was not provided.
+
+Tasks:
+${taskContext}
+
+For each task, explain briefly why you gave it that priority.
+`;
+
+    // 4. Ask the LLM to analyze the context
+    const result = await generateAIResponse(prompt);
+
+    // 5. Validate the response structure
+if (!result || !Array.isArray(result.tasks)) {
+  return res.status(502).json({
+    message: "AI returned an invalid response structure",
+  });
+}
+
+const validPriorities = ["High", "Medium", "Low"];
+const userTaskIds = new Set(tasks.map((task) => task._id.toString()));
+const seenTaskIds = new Set();
+
+for (const item of result.tasks) {
+  if (
+    !item ||
+    typeof item.taskId !== "string" ||
+    !validPriorities.includes(item.priority) ||
+    typeof item.reason !== "string"
+  ) {
+    return res.status(502).json({
+      message: "AI returned an invalid task analysis",
+    });
+  }
+
+  if (!userTaskIds.has(item.taskId)) {
+    return res.status(502).json({
+      message: "AI returned an unknown task ID",
+    });
+  }
+
+  if (seenTaskIds.has(item.taskId)) {
+    return res.status(502).json({
+      message: "AI returned a duplicate task ID",
+    });
+  }
+
+  seenTaskIds.add(item.taskId);
+}
+
+    // 5. Return the result to the frontend
+    res.json({ result });
+  } catch (error) {
+    console.error("AI request failed:", error);
+
+    res.status(500).json({
+      message: "Failed to analyze tasks",
+    });
+  }
+});
+
 app.patch("/tasks/:id", authMiddleware, async (req, res) => {
   try {
     const title = req.body.title?.trim();
@@ -115,7 +188,7 @@ app.patch("/tasks/:id", authMiddleware, async (req, res) => {
         userId: req.user.userId,
       },
       { title, completed },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     );
 
     if (!updatedTask) {

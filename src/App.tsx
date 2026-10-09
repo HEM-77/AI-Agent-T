@@ -8,23 +8,16 @@ function App() {
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      <Route path="/login" element={<Login />} />
+      <Route path="/login" element={<Login />} /> 
       <Route
-        path="/dashboard"
-        element={
-          <ProtectedRoute>
-            <Dashboard />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/tasks/:id"
-        element={
-          <ProtectedRoute>
-            <TaskDetails />
-          </ProtectedRoute>
-        }
-      />
+  path="/dashboard"
+  element={
+    <ProtectedRoute>
+      <Dashboard />
+    </ProtectedRoute>
+  }
+/>
+      <Route path="/tasks/:id" element={<TaskDetails />} />
     </Routes>
   );
 }

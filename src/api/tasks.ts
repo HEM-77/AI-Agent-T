@@ -5,17 +5,43 @@ const API_URL = "http://localhost:5000";
 function getAuthHeaders() {
   const token = localStorage.getItem("token");
 
+  if (!token) {
+    throw new Error("No authentication token found. Please log in.");
+  }
+
   return {
     Authorization: `Bearer ${token}`,
   };
 }
+
+function handleUnauthorized(response: Response) {
+  if (response.status === 401) {
+    localStorage.removeItem("token");
+    window.location.href = "/login";
+    return true;
+  }
+
+  return false;
+}
+
 export async function getTasks(): Promise<Task[]> {
   const response = await fetch(`${API_URL}/tasks`, {
     headers: getAuthHeaders(),
   });
+  if (handleUnauthorized(response)) {
+    throw new Error("Session expired. Please log in again.");
+  }
 
   if (!response.ok) {
-    throw new Error("Failed to fetch tasks");
+    const errorData = await response.json().catch(() => null);
+
+    console.error("getTasks failed:", {
+      status: response.status,
+      message: errorData?.message,
+      hasToken: Boolean(localStorage.getItem("token")),
+    });
+
+    throw new Error(errorData?.message || "Failed to fetch tasks");
   }
 
   return response.json();
@@ -53,7 +79,7 @@ export async function createTask(title: string): Promise<Task> {
 export async function updateTask(
   id: string,
   title: string,
-  completed: boolean
+  completed: boolean,
 ): Promise<Task> {
   const response = await fetch(`${API_URL}/tasks/${id}`, {
     method: "PATCH",
@@ -62,9 +88,9 @@ export async function updateTask(
       ...getAuthHeaders(),
     },
     body: JSON.stringify({
-  title,
-  completed,
-}),
+      title,
+      completed,
+    }),
   });
 
   if (!response.ok) {
